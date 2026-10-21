@@ -134,7 +134,8 @@ static bool Can_BaselineMatches(void)
 {
     return (INST_FLEXCAN_0 == CAN_CFG_INSTANCE) &&
            (FlexCAN_Config0.max_num_mb == 16U) &&
-           (FlexCAN_Config0.flexcanMode == FLEXCAN_LOOPBACK_MODE) &&
+           ((FlexCAN_Config0.flexcanMode == FLEXCAN_LOOPBACK_MODE)||
+        	(FlexCAN_Config0.flexcanMode == FLEXCAN_NORMAL_MODE)) &&
            (FlexCAN_Config0.is_rx_fifo_needed == FALSE) &&
            (FlexCAN_Config0.fd_enable == FALSE) &&
            (FlexCAN_Config0.bitRateSwitch == FALSE) &&
