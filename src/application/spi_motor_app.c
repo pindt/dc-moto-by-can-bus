@@ -192,6 +192,7 @@ static void Accept(const App_Command *request, uint32_t now, bool local)
         HbIo_InitPins();
         s_motor.reverse=false;
         s_direction=false;
+        if (!HbIo_InitPwm()) { Fail(9U); return; }
         if (!HbIo_InitSpi()) { Fail(1U); return; }
         s_deadline=now+10U;
         s_phase=PH_BOOT_WAIT;
@@ -199,13 +200,16 @@ static void Accept(const App_Command *request, uint32_t now, bool local)
     }
     if (!s_boot_complete) { Finish(CP_NOT_CONFIGURED); return; }
     if (s_motor.fault!=CP_FAULT_NONE) { Finish(CP_MOTOR_FAULT); return; }
-    if (request->command.opcode==CP_SET_DUTY && request->command.argument!=0U &&
-        request->command.argument!=1000U) { Finish(CP_INVALID_ARGUMENT); return; }
+    if (request->command.opcode==CP_SET_DUTY &&
+        !CanProtocol_QuantizeDuty(request->command.argument,&s_request.command.argument)) {
+        Finish(CP_INVALID_ARGUMENT);
+        return;
+    }
     if (request->command.opcode==CP_START_FORWARD) s_direction=false;
     if (request->command.opcode==CP_START_REVERSE) s_direction=true;
     if (request->command.opcode==CP_SET_DUTY) {
-        s_motor.requested_duty=request->command.argument;
-        if (request->command.argument==0U) { BeginOff(false); return; }
+        s_motor.requested_duty=s_request.command.argument;
+        if (s_motor.requested_duty==0U) { BeginOff(false); return; }
     } else s_motor.requested_duty=1000U;
     if (g_MotorOn && s_motor.reverse==s_direction) {
         if (!HbIo_SetOutput(s_direction,s_motor.requested_duty)) { Fail(2U); return; }
@@ -258,7 +262,8 @@ void SpiMotorApp_Init(uint32_t now)
     PinsOff();
     s_phase=PH_BOOT_WAIT;
     s_deadline=now+10U;
-    if (!HbIo_InitSpi()) { Fail(1U); s_phase=PH_FAULT_IDLE; }
+    if (!HbIo_InitPwm()) { Fail(9U); s_phase=PH_FAULT_IDLE; }
+    else if (!HbIo_InitSpi()) { Fail(1U); s_phase=PH_FAULT_IDLE; }
     Publish();
 }
 void SpiMotorApp_SystemFault(uint32_t reason)

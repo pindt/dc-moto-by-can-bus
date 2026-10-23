@@ -21,18 +21,33 @@ Gửi một lệnh chạy là giữ chạy liên tục. Không có KEEPALIVE, se
 máy tính xác nhận phản hồi. Không gửi lại các frame V1 có sequence ở byte đầu:
 V2 dùng byte đầu làm opcode, nên ý nghĩa frame đã thay đổi.
 
-PTD1 → IN1 và PTD15 → IN2 đều là GPIO. Không dùng timer/PWM.
-Vì vậy chỉ có chạy toàn mức điều khiển hoặc dừng; không có tốc độ trung gian/RPM.
-Opcode 04 chỉ chấp nhận:
-- 04 E8 03 00 00 00 00 00: mức 1000/1000, chạy theo chiều đã chọn.
-- 04 00 00 00 00 00 00 00: mức 0, dừng.
-Giá trị 1…999 bị từ chối với mã 81; không đổi trạng thái đang chạy.
+PTD1 → IN1 và PTD15 → IN2 đều giữ chế độ GPIO. Dùng ngắt SysTick 1 ms
+đang có để bật/tắt PTD15, không cấu hình thêm LPIT hay ngõ ra FTM/PWM.
+Mỗi chu kỳ có 4 nhịp: 25% bật 1/tắt 3, 50% bật 2/tắt 2, 75% bật 3/tắt 1.
+Chu kỳ danh định 4 ms (250 Hz); không yêu cầu dạng xung chính xác.
+Mức 0% giữ LOW, 100% giữ HIGH. STOP hủy mẫu bật/tắt và kéo LOW ngay;
+SysTick vẫn chạy để phục vụ thời gian ứng dụng. Clock/pin generated giữ nguyên.
+Opcode 04 nhận duty 0…1000 (phần nghìn), quy đổi về mức gần nhất trong
+0, 250, 500, 750, 1000, tương ứng 0%, 25%, 50%, 75%, 100%. Đúng giữa hai mức
+thì làm tròn lên. Ví dụ gửi 200 (20%) áp dụng 250 (25%); 700 (70%) áp dụng 750.
+Giá trị ngoài 0…1000 vẫn bị từ chối với mã 81. Đây là duty, không phải RPM.
+
+| Duty áp dụng | Frame CAN ID 0x100, DLC 8 |
+| --- | --- |
+| 0% | 04 00 00 00 00 00 00 00 |
+| 25% | 04 FA 00 00 00 00 00 00 |
+| 50% | 04 F4 01 00 00 00 00 00 |
+| 75% | 04 EE 02 00 00 00 00 00 |
+| 100% | 04 E8 03 00 00 00 00 00 |
+
+ACK và requestedDuty trong status phản ánh mức sau quy đổi. START/thuận/nghịch
+vẫn đặt mức 100%; gửi SET_DUTY để đổi mức theo chiều đã chọn.
 
 ## Hành vi
 
 - START/thuận/nghịch không cần CAN gửi định kỳ. Lệnh chạy đến trong lúc khởi tạo
   được giữ lại và thực hiện khi HB2000 sẵn sàng, nếu không có lỗi.
-- Thuận: PTD1=1, PTD15=1; nghịch: PTD1=0, PTD15=1.
+- Thuận: PTD1=1; nghịch: PTD1=0. PTD15 phát xung theo duty đã chọn.
 - STOP hạ PTD15 trước rồi tắt EN qua SPI và đọc lại cấu hình.
 - Khi đang chạy mà đổi chiều: hạ IN2, xác minh EN=0, chờ khoảng ngắt 100 ms,
   đổi IN1 rồi bật EN và IN2. Khoảng này không phải phép đo trục đã đứng yên.

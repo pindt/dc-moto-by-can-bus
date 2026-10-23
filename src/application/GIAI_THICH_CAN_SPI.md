@@ -1,7 +1,9 @@
 # CAN – SPI HB2000: bảng lệnh và dữ liệu phản hồi V2
 
-Bản này dùng GPIO theo yêu cầu: PTD1 chọn chiều, PTD15 bật/tắt IN2.
-Không có PWM, KEEPALIVE, số thứ tự sequence hay xác nhận từ PC.
+Bản này giữ GPIO theo yêu cầu: PTD1 chọn chiều, timer bật/tắt PTD15 vào IN2.
+Dùng SysTick 1 ms đang có; PTD15 vẫn MUX=GPIO, không dùng LPIT hay ngõ ra FTM.
+Mỗi 4 nhịp bật 0/1/2/3/4 nhịp, tạo các mức 0/25/50/75/100% gần đúng.
+Không có KEEPALIVE, số thứ tự sequence hay xác nhận từ PC.
 Gửi START/thuận/nghịch một lần sẽ giữ chạy đến khi STOP hoặc có lỗi chặn.
 
 **Giao thức đã đổi so với V1:** byte đầu giờ là opcode.
@@ -37,6 +39,9 @@ Tất cả gửi ID 0x100, DLC=8.
 | START | 01 00 00 00 00 00 00 00 | Chạy theo chiều đã chọn, mặc định thuận |
 | Thuận | 02 00 00 00 00 00 00 00 | Chọn thuận và chạy |
 | Nghịch | 03 00 00 00 00 00 00 00 | Chọn nghịch và chạy |
+| Mức 25% | 04 FA 00 00 00 00 00 00 | Duty 250/1000 theo chiều đã chọn |
+| Mức 50% | 04 F4 01 00 00 00 00 00 | Duty 500/1000 theo chiều đã chọn |
+| Mức 75% | 04 EE 02 00 00 00 00 00 | Duty 750/1000 theo chiều đã chọn |
 | Mức chạy 1000/1000 | 04 E8 03 00 00 00 00 00 | Chạy theo chiều đã chọn |
 | Mức 0 | 04 00 00 00 00 00 00 00 | Dừng |
 | CLEAR_FAULT | 05 00 00 00 00 00 00 00 | Xóa lỗi nếu điều kiện gây lỗi đã hết; giữ dừng |
@@ -46,10 +51,20 @@ Không cần gửi lặp. Gửi lặp cùng lệnh đang thực hiện không l�
 trình đó. Lệnh điều khiển mới thay thế lệnh thường đang chờ; STOP luôn ưu tiên.
 Giữ nút STOP vật lý sẽ chặn mọi lệnh chạy.
 
-GPIO mức cố định chỉ cho phép chạy/dừng. Argument 1…999 của opcode 04 bị từ chối
-với mã 81, không tạo tốc độ trung gian. Hai frame 04 2C 01… (30%) và 04 BC 02…
-(70%) không chạy được trong bản GPIO này. Duty 1000 cũng không có nghĩa tốc độ
-trục bằng một giá trị RPM cố định.
+Opcode 04 nhận argument 0…1000, quy đổi về mức gần nhất trong 0, 250, 500,
+750, 1000. Giá trị đúng giữa hai mức được làm tròn lên. Cụ thể:
+
+| Argument nhận (phần nghìn) | Duty áp dụng |
+| --- | --- |
+| 0…124 | 0% (dừng) |
+| 125…374 | 25% |
+| 375…624 | 50% |
+| 625…874 | 75% |
+| 875…1000 | 100% |
+
+Giá trị >1000 bị từ chối với mã 81. Ví dụ 30% (`04 2C 01…`) thành 25%;
+70% (`04 BC 02…`) thành 75%. Duty không phải phần trăm RPM đã đo.
+START/thuận/nghịch vẫn chọn duty 100%; SET_DUTY chạy theo chiều đã chọn.
 
 Ví dụ thao tác độc lập, không cần KEEPALIVE:
 
@@ -99,7 +114,7 @@ không phát thêm phản hồi PENDING cho mỗi lệnh.
 | 00 | OK, ví dụ GET_STATUS |
 | 02 | COMPLETED: GPIO/config đã được xác minh |
 | 80 | Opcode/định dạng không hợp lệ |
-| 81 | Argument không hợp lệ, gồm tốc độ trung gian khi chỉ dùng GPIO |
+| 81 | Argument ngoài 0…1000 hoặc byte dự phòng/argument opcode khác không hợp lệ |
 | 82 | Trạng thái không cho phép thực hiện |
 | 83 | Chưa khởi tạo được backend |
 | 84 | Lỗi điều khiển motor/HB2000 |
@@ -115,10 +130,13 @@ Ví dụ chạy thuận hoàn tất:
 
     01 00 02 02 00 00 00 02
 
-Ví dụ đặt mức 30% bị từ chối vì không có PWM:
+Ví dụ đặt mức 30% được quy đổi thành 25%, phản hồi sau khi áp dụng:
 
     TX ID100: 04 2C 01 00 00 00 00 00
-    RX ID180: 01 00 81 04 2C 01 00 02
+    RX ID180: 01 00 02 04 FA 00 00 02
+
+ACK dùng argument sau quy đổi; các byte gốc vẫn được giữ nội bộ để nhận biết
+lệnh gửi lặp, không làm khởi động lại cùng một lệnh đang thực hiện.
 
 Phản hồi dùng bộ đệm mới nhất. Khi gửi dồn nhiều lệnh trong lúc TX bận, có thể
 mất phản hồi cũ; việc điều khiển và STOP không chờ bộ đệm gửi hay xác nhận PC.
@@ -148,8 +166,8 @@ mất phản hồi cũ; việc điều khiển và STOP không chờ bộ đệm
 | 6 | 40 | Chiều điều khiển hiện tại là nghịch |
 | 7 | 80 | Dự phòng |
 
-requestedDuty là giá trị yêu cầu, không phải RPM hay phép đo tốc độ.
-STOP thông thường có thể giữ requestedDuty=1000 nhưng đầu ra đã ngắt.
+requestedDuty là mức sau quy đổi, không phải RPM hay phép đo tốc độ.
+STOP thông thường có thể giữ requestedDuty ở mức trước đó nhưng đầu ra đã ngắt.
 SET_DUTY=0 đặt requestedDuty=0; START tiếp theo đặt lại mức chạy 1000.
 
 Ví dụ khi không còn lệnh đang chờ:
@@ -178,7 +196,8 @@ RUNNING xác nhận lệnh GPIO/config đã áp dụng, không xác nhận trụ
 Mã 01 là mã timeout liên lạc cũ, V2 không còn sinh lỗi do thiếu KEEPALIVE.
 Các mã enum khác là dự phòng/không có đường sinh bình thường trong app này.
 g_Fault trong debugger là mã chẩn đoán nội bộ, không cùng bảng với byte fault CAN:
-1=SPI API, 2=readback/protocol/GPIO, 4=cờ chặn HB, 5=time, 8=khóa từ supervisor.
+1=SPI API, 2=readback/protocol/GPIO, 4=cờ chặn HB, 5=time, 8=khóa từ supervisor,
+9=khởi tạo bộ phát PWM phần mềm.
 main.c còn dùng các mã riêng 3/6/7 cho khởi tạo clock/pin/interrupt.
 
 ### 4.4. HB_DIAGNOSTICS
@@ -229,8 +248,8 @@ EN=bit4, MODE=bit3, INPUT=bit2. App chọn MODE=1 và INPUT=0 để dùng chân 
 
 | Trạng thái | PTD1 → IN1 | PTD15 → IN2 | EN SPI |
 | --- | --- | --- | --- |
-| Thuận | 1 | 1 | 1 |
-| Nghịch | 0 | 1 | 1 |
+| Thuận | 1 | PWM theo duty (100% = 1) | 1 |
+| Nghịch | 0 | PWM theo duty (100% = 1) | 1 |
 | STOP đã xác minh | Giữ chiều | 0 | 0 |
 
 ENBL kéo cao bằng jumper không ghi đè bit EN=0 qua SPI.

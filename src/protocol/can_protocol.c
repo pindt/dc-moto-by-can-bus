@@ -2,6 +2,13 @@
 #include <stddef.h>
 #include <string.h>
 
+bool CanProtocol_QuantizeDuty(uint16_t requested_duty, uint16_t *quantized_duty)
+{
+    if (requested_duty>1000U || quantized_duty==NULL) return false;
+    *quantized_duty=(uint16_t)(((requested_duty+125U)/250U)*250U);
+    return true;
+}
+
 Cp_DecodeResult CanProtocol_Decode(uint16_t id, bool extended, bool remote,
                                  uint8_t dlc, const uint8_t *data)
 {
@@ -20,7 +27,7 @@ Cp_DecodeResult CanProtocol_Decode(uint16_t id, bool extended, bool remote,
         r.result=CP_INVALID_ARGUMENT; return r;
     }
     if (r.command.opcode==CP_SET_DUTY) {
-        if (r.command.argument!=0U && r.command.argument!=1000U) {
+        if (!CanProtocol_QuantizeDuty(r.command.argument,&r.command.argument)) {
             r.result=CP_INVALID_ARGUMENT; return r;
         }
     } else if (r.command.argument!=0U) { r.result=CP_INVALID_ARGUMENT; return r; }

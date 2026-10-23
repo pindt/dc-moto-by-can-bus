@@ -10,11 +10,15 @@ typedef struct {
 } CanApp_Config;
 typedef struct {
     uint32_t malformed, rx_overruns, rx_dropped;
+    uint32_t service_cycles;
     Can_Status last_api_status;
     Cp_Fault fault;
-    bool tx_pending, control_allowed;
+    bool tx_pending, tx_failed, control_allowed;
 } CanApp_Diagnostics;
 extern volatile CanApp_Diagnostics g_CanAppDiagnostics;
+/* Cached driver details for the debugger, including bus-off/error counters.
+ * This does not add fields to any CAN frame. */
+extern volatile Can_Diagnostics g_CanDriverDiagnostics;
 /* Sole foreground CAN owner; initialize once, with no outstanding transfers. */
 void CanApp_Init(const CanApp_Config *config);
 /* One bounded foreground round. No KEEPALIVE, sequence or client ACK. */

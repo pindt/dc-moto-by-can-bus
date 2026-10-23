@@ -1,5 +1,6 @@
 #include "hb2000_io.h"
 #include "app_time.h"
+#include "gpio_pwm.h"
 #include "SpiDrv.h"
 #include "SpiDrv_PBcfg.h"
 #include "S32K144_PCC.h"
@@ -16,11 +17,13 @@ volatile uint32_t g_SpiActualHz;
 volatile uint32_t g_SpiErrors;
 volatile uint16_t g_SpiLastTx, g_SpiLastRx;
 static bool s_reverse, s_running;
+static uint16_t s_duty;
 
 void HbIo_InitPins(void)
 {
     IP_PCC->PCCn[PCC_PORTC_INDEX]|=PCC_PCCn_CGC_MASK;
     IP_PCC->PCCn[PCC_PORTD_INDEX]|=PCC_PCCn_CGC_MASK;
+    GpioPwm_Stop();
     IP_PTD->PCOR=HB_BIT(15);
     IP_PTD->PSOR=HB_BIT(1);
     IP_PORTD->PCR[1]=PORT_PCR_MUX(1U);
@@ -31,10 +34,30 @@ void HbIo_InitPins(void)
     IP_PTC->PDDR&=~(HB_BIT(12)|HB_BIT(13));
     s_running=false;
     s_reverse=false;
+    s_duty=0U;
+}
+bool HbIo_InitPwm(void)
+{
+    /* Called after IntCtrl/AppTime initialization, never during early pin setup. */
+    s_running=false;
+    s_duty=0U;
+    return GpioPwm_Init();
 }
 bool HbIo_InitSpi(void)
 {
     uint32 actual=0U;
+    SpiDrv_StatusType status;
+    /* This application owns SpiDrv. CLEAR_FAULT reaches this function again;
+     * deinitialize before replacing the static config borrowed by the driver.
+     * Keep IN2 low throughout recovery and propagate real deinit errors. */
+    HbIo_SetRun(false);
+    status=SpiDrv_DeInit();
+    g_SpiActualHz=0U;
+    if (status!=SPIDRV_OK && status!=SPIDRV_NOT_INIT) {
+        g_SpiInitStatus=status;
+        g_LastSpiStatus=status;
+        return false;
+    }
     s_config=SpiDrv_Config;
     s_device=SpiDrv_Config.Devices[SPIDRV_DEV_LPSPI0_MODE0];
     s_device.OverrideMask=(uint8)(SPIDRV_OVR_BUS|SPIDRV_OVR_FRAME|
@@ -49,6 +72,7 @@ bool HbIo_InitSpi(void)
     s_config.DeviceCount=1U;
     s_config.Devices=&s_device;
     g_SpiInitStatus=SpiDrv_Init(&s_config);
+    g_LastSpiStatus=g_SpiInitStatus;
     if (g_SpiInitStatus!=SPIDRV_OK) return false;
     g_LastSpiStatus=SpiDrv_SetBaud(HB_DEVICE,1000000U,&actual);
     g_SpiActualHz=actual;
@@ -56,37 +80,48 @@ bool HbIo_InitSpi(void)
 }
 void HbIo_SetRun(bool running)
 {
-    /* IN2 is a fixed GPIO level. No timer or PWM is used. */
-    if (running) IP_PTD->PSOR=HB_BIT(15);
-    else IP_PTD->PCOR=HB_BIT(15);
-    IP_PORTD->PCR[15]=PORT_PCR_MUX(1U);
-    s_running=running;
+    if (running) {
+        s_running=GpioPwm_SetDuty(1000U);
+        s_duty=s_running ? 1000U : 0U;
+    } else {
+        /* Stop also revokes the interrupt's permission to raise IN2 again. */
+        GpioPwm_Stop();
+        s_running=false;
+        s_duty=0U;
+    }
 }
 bool HbIo_InputsMatch(bool running)
 {
-    return HbIo_OutputMatches(s_reverse,running ? 1000U : 0U);
+    return running==s_running && HbIo_OutputMatches(s_reverse,s_duty);
 }
 bool HbIo_SetOutput(bool reverse, uint16_t duty)
 {
-    if ((duty!=0U && duty!=1000U) || (reverse!=s_reverse && s_running))
+    if (duty>1000U || duty%250U!=0U || (reverse!=s_reverse && s_running))
         return false;
-    if (reverse==s_reverse && (duty!=0U)==s_running &&
-        HbIo_OutputMatches(reverse,duty)) return true;
-    HbIo_SetRun(false);
-    if (reverse) IP_PTD->PCOR=HB_BIT(1);
-    else IP_PTD->PSOR=HB_BIT(1);
-    s_reverse=reverse;
-    if (duty==1000U) HbIo_SetRun(true);
+    if (reverse==s_reverse && HbIo_OutputMatches(reverse,duty)) return true;
+    if (reverse!=s_reverse) {
+        HbIo_SetRun(false);
+        if (reverse) IP_PTD->PCOR=HB_BIT(1);
+        else IP_PTD->PSOR=HB_BIT(1);
+        s_reverse=reverse;
+    }
+    if (!GpioPwm_SetDuty(duty)) {
+        HbIo_SetRun(false);
+        return false;
+    }
+    s_duty=duty;
+    s_running=duty!=0U;
     return HbIo_OutputMatches(reverse,duty);
 }
 bool HbIo_OutputMatches(bool reverse, uint16_t duty)
 {
-    uint32_t expected=(reverse ? 0U : HB_BIT(1))|(duty==1000U ? HB_BIT(15) : 0U);
-    return (duty==0U || duty==1000U) &&
+    return duty<=1000U && duty%250U==0U &&
            (IP_PORTD->PCR[1]&PORT_PCR_MUX_MASK)==PORT_PCR_MUX(1U) &&
            (IP_PORTD->PCR[15]&PORT_PCR_MUX_MASK)==PORT_PCR_MUX(1U) &&
            (IP_PTD->PDDR&(HB_BIT(1)|HB_BIT(15)))==(HB_BIT(1)|HB_BIT(15)) &&
-           (IP_PTD->PDOR&(HB_BIT(1)|HB_BIT(15)))==expected;
+           (IP_PTD->PDOR&HB_BIT(1))==(reverse ? 0U : HB_BIT(1)) &&
+           s_reverse==reverse && s_duty==duty &&
+           s_running==(duty!=0U) && GpioPwm_Matches(duty);
 }
 bool HbIo_StartPressed(void) { return (IP_PTC->PDIR&HB_BIT(12))!=0U; }
 bool HbIo_StopPressed(void) { return (IP_PTC->PDIR&HB_BIT(13))!=0U; }

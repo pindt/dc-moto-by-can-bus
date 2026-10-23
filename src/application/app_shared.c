@@ -50,20 +50,23 @@ static Cp_Result Publish(Slot *slot, const Cp_Command *command, uint32_t *id)
 Cp_Result AppShared_PublishCommand(const Cp_Command *command, uint32_t *id)
 {
     const App_MotorStatus *motor=&snapshot.motor;
+    Cp_Command normalized;
     if (id!=NULL) *id=0U;
     if (command==NULL || id==NULL) return CP_INVALID_ARGUMENT;
     if (command->opcode!=CP_START && command->opcode!=CP_START_FORWARD && command->opcode!=CP_START_REVERSE &&
         command->opcode!=CP_SET_DUTY && command->opcode!=CP_CLEAR_FAULT)
         return CP_INVALID_COMMAND;
-    if ((command->opcode==CP_SET_DUTY && command->argument!=0U && command->argument!=1000U) ||
-        (command->opcode!=CP_SET_DUTY && command->argument!=0U))
-        return CP_INVALID_ARGUMENT;
+    normalized=*command;
+    if (command->opcode==CP_SET_DUTY) {
+        if (!CanProtocol_QuantizeDuty(command->argument,&normalized.argument))
+            return CP_INVALID_ARGUMENT;
+    } else if (command->argument!=0U) return CP_INVALID_ARGUMENT;
     if (command->opcode!=CP_CLEAR_FAULT) {
         if (inhibit.latched) return CP_SAFETY_INTERLOCK;
         if (motor->fault!=CP_FAULT_NONE) return CP_MOTOR_FAULT;
     }
     /* A command received during the short boot sequence is retained. */
-    return Publish(&ordinary,command,id);
+    return Publish(&ordinary,&normalized,id);
 }
 void AppShared_LatchInhibit(Cp_Fault fault)
 {

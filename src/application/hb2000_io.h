@@ -8,8 +8,10 @@ typedef enum {
 } HbIo_Result;
 
 void HbIo_InitPins(void);
+bool HbIo_InitPwm(void); /* After IntCtrl/AppTime init; leaves IN2 low. */
 bool HbIo_InitSpi(void);
-/* PTD1 = direction, PTD15 = fixed GPIO run level. Only 0/1000 supported. */
+/* PTD1 = direction; PTD15 remains GPIO, switched by the 1 ms timer tick.
+ * Duty is per mille: 0, 250, 500, 750 or 1000. */
 bool HbIo_SetOutput(bool reverse, uint16_t duty);
 bool HbIo_OutputMatches(bool reverse, uint16_t duty);
 void HbIo_SetRun(bool running);

@@ -50,7 +50,11 @@ typedef struct {
 } Cp_DecodeResult;
 
 /* V2 RX: [opcode, argumentLo, argumentHi, 0, 0, 0, 0, 0].
+ * SET_DUTY accepts 0..1000 permille and rounds to 0/250/500/750/1000.
  * No sequence, KEEPALIVE or response acknowledgement is required. */
+/* Nearest 25% step; an exact halfway value rounds up. Invalid input does
+ * not modify the output. The received identity bytes are never changed. */
+bool CanProtocol_QuantizeDuty(uint16_t requested_duty, uint16_t *quantized_duty);
 Cp_DecodeResult CanProtocol_Decode(uint16_t id, bool extended, bool remote,
                                  uint8_t dlc, const uint8_t *data);
 void CanProtocol_EncodeAck(uint8_t out[8], const Cp_Command *command,

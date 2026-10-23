@@ -10,6 +10,7 @@ static bool reply_due, status_due, hb_due, error_due;
 static bool tx_pending, tx_failed, clock_seen, telemetry_started;
 static uint32_t last_telemetry;
 volatile CanApp_Diagnostics g_CanAppDiagnostics;
+volatile Can_Diagnostics g_CanDriverDiagnostics;
 
 static void Fault(Cp_Fault fault)
 {
@@ -30,6 +31,7 @@ void CanApp_Init(const CanApp_Config *config)
     memset(&inflight,0,sizeof inflight);
     memset(&reply_command,0,sizeof reply_command);
     memset((void *)&g_CanAppDiagnostics,0,sizeof g_CanAppDiagnostics);
+    memset((void *)&g_CanDriverDiagnostics,0,sizeof g_CanDriverDiagnostics);
     reply_due=false; status_due=false; hb_due=false; error_due=false;
     tx_pending=false; tx_failed=false; clock_seen=false; telemetry_started=false;
     last_telemetry=0U;
@@ -150,6 +152,7 @@ void CanApp_Service(uint32_t now, bool valid)
     Can_Status result;
     bool can_send=true;
     App_Inhibit safety;
+    ++g_CanAppDiagnostics.service_cycles;
     Results(); /* Consumes completions even when the USB-CAN cannot receive TX. */
     safety=AppShared_ReadInhibit();
     if (safety.fault!=CP_FAULT_NONE && g_CanAppDiagnostics.fault==CP_FAULT_NONE)
@@ -163,7 +166,7 @@ void CanApp_Service(uint32_t now, bool valid)
     }
     if (CanDriver_GetDiagnostics(&diagnostics)!=CAN_STATUS_OK) {
         Fault(CP_FAULT_CAN_API); can_send=false;
-    }
+    } else g_CanDriverDiagnostics=diagnostics;
     if (diagnostics.bus_off_seen) { Fault(CP_FAULT_BUS_OFF); can_send=false; }
     if (CanDriver_GetState()!=CAN_DRIVER_RUNNING) { Fault(CP_FAULT_CAN_API); can_send=false; }
     if (CanDriver_GetState()==CAN_DRIVER_RUNNING) {
@@ -179,5 +182,6 @@ void CanApp_Service(uint32_t now, bool valid)
     }
     Transmit(now,valid,can_send);
     g_CanAppDiagnostics.tx_pending=tx_pending;
+    g_CanAppDiagnostics.tx_failed=tx_failed;
     g_CanAppDiagnostics.control_allowed=CanApp_LocalStartAllowed(now,valid);
 }

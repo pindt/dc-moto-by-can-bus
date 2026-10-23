@@ -1,4 +1,5 @@
 #include "app_time.h"
+#include "gpio_pwm.h"
 #include "OsIf_Cfg.h"
 #include "S32K144_SYSTICK.h"
 
@@ -28,12 +29,13 @@ bool AppTime_Init(uint32_t core_hz)
     S32_SysTick->CSRr=7U; /* Core clock, 1 ms interrupt, enabled. */
     return true;
 }
-/* Overrides the existing weak startup handler. Only time is shared with ISR;
- * motor/CAN/SPI mailboxes are exclusively accessed by the foreground loop. */
+/* Overrides the existing weak startup handler. The timer also advances the
+ * GPIO on/off pattern; CAN/SPI mailboxes remain foreground-only. */
 void SysTick_Handler(void)
 {
     ++g_AppNowMs;
     s_tick_seen=true;
+    GpioPwm_Tick();
 }
 uint32_t AppTime_NowMs(void) { return g_AppNowMs; }
 bool AppTime_IsValid(void)
